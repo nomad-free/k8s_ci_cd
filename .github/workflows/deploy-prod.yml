@@ -11,38 +11,81 @@ on:
 
 concurrency:
   group: deploy-prod-${{ github.ref }}
-  cancel-in-progress: false # [중요] 운영 배포는 절대 중간에 취소하면 안 됨 (꼬임 방지)
+  cancel-in-progress: false # [중요] 운영 배포는 안전을 위해 취소하지 않음
 
 permissions:
-  id-token: write # AWS OIDC 인증용
+  id-token: write
   contents: read
-  packages: write # 컨테이너 레지스트리 쓰기 권한
-  attestations: write # [2025 New] 이미지 무결성 증명서(Attestation) 작성 권한
+  packages: write
+  attestations: write
 
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: k8s-ci-cd-app
   EKS_CLUSTER_NAME: k8s-ci-cd-prod
   ENVIRONMENT: prod
-  NODE_VERSION: "22" # [2025 Standard] Node.js 22 LTS
+  NODE_VERSION: "22" # [2025 Standard] Node.js 22 (LTS)
 
 jobs:
-  # 1. 빌드 및 ECR 푸시 (운영용 태그 생성)
+  # 1. CI 체크 (Dev와 동일)
+  ci:
+    name: 🔍 CI Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - name: 📦 Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: 🔍 Run lint
+        working-directory: ./app
+        run: npm run lint
+
+      - name: 🧪 Run tests
+        working-directory: ./app
+        run: npm test
+
+  # 2. 보안 스캔 (Prod 필수)
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+  # 3. 빌드 및 ECR 푸시
   build:
     name: 🏗️ Build & Push
     runs-on: ubuntu-latest
+    needs: [ci, security-scan]
     outputs:
       image_uri: ${{ steps.build.outputs.image_uri }}
-      image_tag: ${{ steps.meta.outputs.version }} # 슬랙 알림에 쓸 버전 정보
+      image_tag: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: 📥 Checkout code
-        # [2025.04 출시] actions/checkout@v5
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: 🔐 Configure AWS credentials
-        # [2025.03 출시] aws-actions/configure-aws-credentials@v5
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: gha-prod-${{ github.run_id }}
@@ -50,25 +93,21 @@ jobs:
 
       - name: 🔐 Login to Amazon ECR
         id: login-ecr
-        # [2025.02 출시] aws-actions/amazon-ecr-login@v3
-        uses: aws-actions/amazon-ecr-login@v3
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: 📋 Generate Metadata
         id: meta
         run: |
           VERSION=$(cat VERSION 2>/dev/null || echo "1.0.0")
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          # 운영용 태그: v1.0.0-a1b2c3d 형식
           echo "version=v${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: 🔧 Set up Docker Buildx
-        # [2025.05 출시] docker/setup-buildx-action@v4
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: 🐳 Build and push Docker image
         id: build
-        # [2025.06 출시] docker/build-push-action@v7
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         with:
@@ -77,17 +116,15 @@ jobs:
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest-prod
-          # [2025 Best Practice] GHA 캐시 사용으로 빌드 속도 최적화
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # [2025 Best Practice] 운영 이미지는 반드시 출처 증명과 SBOM 포함
           provenance: true
           sbom: true
 
       - name: 📤 Output URI
         run: echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
 
-  # 2. 쿠버네티스 배포 및 자동 롤백
+  # 4. 쿠버네티스 배포 및 자동 롤백
   deploy:
     name: 🚀 Deploy to Prod
     runs-on: ubuntu-latest
@@ -96,23 +133,20 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: 🔧 Setup kubectl
-        # [2025.07 출시] azure/setup-kubectl@v5
-        # - K8s 1.34 바이너리 사용
-        uses: azure/setup-kubectl@v5
+        uses: azure/setup-kubectl@v4
         with:
-          version: "v1.34.0"
+          version: "latest"
 
       - name: 🔗 Configure kubectl
-        # [2025] Access Entry 권한으로 즉시 접근 (aws-auth 불필요)
         run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
       - name: 📝 Update image in Kustomization
@@ -122,14 +156,11 @@ jobs:
 
       - name: 🚀 Deploy
         id: deploy
-        run: |
-          echo "🚀 Starting Deployment..."
-          kubectl apply -k kustomize/overlays/prod/
+        run: kubectl apply -k kustomize/overlays/prod/
 
       - name: ⏳ Wait for rollout
         id: rollout
         run: |
-          # 5분간 배포 완료 대기. 실패 시 exit code 1 반환
           if kubectl rollout status deployment/app -n app-prod --timeout=300s; then
             echo "status=success" >> $GITHUB_OUTPUT
           else
@@ -137,26 +168,22 @@ jobs:
             exit 1
           fi
 
-      # [중요] 배포 실패 시 자동 롤백
+      # [Prod 전용] 자동 롤백
       - name: ⏪ Auto Rollback
         if: failure() && steps.rollout.outputs.status == 'failed'
         run: |
           echo "🚨 Deployment Failed! Initiating Rollback..."
           kubectl rollout undo deployment/app -n app-prod
-
-          # 롤백이 잘 됐는지도 확인
           if kubectl rollout status deployment/app -n app-prod --timeout=300s; then
             echo "✅ Rollback Successful."
           else
-            echo "❌ Rollback Failed. Manual intervention required!"
+            echo "❌ Rollback Failed."
             exit 1
           fi
 
-      # [2025 Best Practice] Slack Notification V2 (Block Kit 활용)
-      # - 기존 3rd party 액션 대신 Slack 공식 액션 사용 권장
-      # - slackapi/slack-github-action@v2.0.0 (2025.04 출시)
+      # Slack 알림 (Dev와 동일한 포맷 사용)
       - name: 📢 Notify Slack
-        if: always() # 성공이든 실패든 무조건 알림
+        if: always()
         uses: slackapi/slack-github-action@v2.0.0
         with:
           webhook-type: webhook-trigger
@@ -177,7 +204,6 @@ jobs:
                   "fields": [
                     { "type": "mrkdwn", "text": "*Environment:*\nProduction 🌍" },
                     { "type": "mrkdwn", "text": "*Version:*\n`${{ needs.build.outputs.image_tag }}`" },
-                    { "type": "mrkdwn", "text": "*Triggered By:*\n${{ github.actor }}" },
                     { "type": "mrkdwn", "text": "*Status:*\n${{ job.status }}" }
                   ]
                 },
@@ -186,7 +212,7 @@ jobs:
                   "elements": [
                     {
                       "type": "button",
-                      "text": { "type": "plain_text", "text": "View Action Logs" },
+                      "text": { "type": "plain_text", "text": "View Logs" },
                       "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
                     }
                   ]
@@ -196,16 +222,15 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-  # 3. 스모크 테스트 (실제 트래픽 검증)
+  # 5. 스모크 테스트 (Prod 전용)
   verify:
     name: 🧪 Smoke Test
     runs-on: ubuntu-latest
     needs: deploy
-    if: success() # 배포 성공 시에만 실행
-
+    if: success()
     steps:
       - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -213,20 +238,14 @@ jobs:
       - name: 🏥 Health Check via Proxy
         run: |
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
-
-          # 포트포워딩으로 파드 직접 찌르기
           kubectl port-forward svc/app-service 8080:80 -n app-prod &
           PF_PID=$!
           sleep 5
-
-          # 메인 페이지 호출
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
-
           kill $PF_PID 2>/dev/null || true
-
           if [ "$HTTP_CODE" == "200" ]; then
-            echo "✅ Smoke Test Passed! App is responding HTTP 200."
+            echo "✅ Smoke Test Passed!"
           else
-            echo "❌ Smoke Test Failed! App returned HTTP $HTTP_CODE."
+            echo "❌ Smoke Test Failed!"
             exit 1
           fi
