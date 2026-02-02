@@ -1,40 +1,26 @@
 terraform {
-
-  required_version = ">= 1.5.0"
-
-
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.30"
+      version = "~> 6.10"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.24"
+      version = "~> 2.35"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.12"
+      version = "~> 2.16"
     }
   }
-
-
-
-
-
-
-
-
   backend "s3" {
-    bucket = "plydevops-infra-tf-dev"
-    key    = "ci_cd/terraform.tfstate"
-    region = "us-east-1"
-
-    encrypt = true
-
-
-
+    bucket       = "plydevops-infra-tf-dev"
+    key          = "ci_cd/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 provider "aws" {
@@ -45,7 +31,7 @@ provider "aws" {
       Project     = "k8s-ci-cd"
       Environment = var.environment
       ManagedBy   = "terraform"
-      Repository  = "applejjmango/eks_ci_cd"
+      Repository  = "play-builder/k8s_ci_cd"
     }
   }
 }
@@ -65,11 +51,11 @@ provider "kubernetes" {
   }
 }
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     host                   = module.eks.cluster_endpoint
     cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
+    exec = {
+      api_version = "client.authentication.k8s.io/v1"
       command     = "aws"
       args = [
         "eks",
