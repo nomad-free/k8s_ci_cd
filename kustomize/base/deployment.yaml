@@ -1,3 +1,4 @@
+# - 애플리케이션 파드(Pod)를 관리하고 배포하는 핵심 리소스입니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,14 +8,14 @@ metadata:
     app.kubernetes.io/component: backend
 spec:
   replicas: 1
-  revisionHistoryLimit: 5
+  revisionHistoryLimit: 5 ## 롤백을 위해 최근 5개 버전 유지
   
   
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0    
-      maxSurge: 1          
+      maxUnavailable: 0    # 배포 중에도 서비스 중단 없음 (0개만 죽을 수 있음)
+      maxSurge: 1          # 배포 중에 파드 1개를 더 띄움
   
   selector:
     matchLabels:
@@ -28,14 +29,18 @@ spec:
     
     spec:
       serviceAccountName: app-sa
-      automountServiceAccountToken: false
+      # 서비스 어카운트 토큰 자동 마운트 방지 (필요시 명시적 마운트)
+      automountServiceAccountToken: true
       
-      
+      # Pod Security Standards 'Restricted' 준수 설정
+      # - 루트 권한 실행 금지 및 권한 상승 방지 필수
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001
+        runAsUser: 1001 # Dockerfile의 nodejs 유저 UID
         runAsGroup: 1001
         fsGroup: 1001
+        seccompProfile:      # [New] 시스템 콜 제한 프로필 적용
+          type: RuntimeDefault
       
       containers:
         - name: app
@@ -54,7 +59,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            
+
+            # Secrets Manager에서 가져온 비밀값 주입
             - name: DB_HOST
               valueFrom:
                 secretKeyRef:
@@ -83,12 +89,20 @@ spec:
               cpu: "500m"
               memory: "256Mi"
           
-          
+          # [Best Practice] StartupProbe 추가
+          # - 앱이 처음 뜰 때 초기화 시간을 벌어줍니다. (느린 앱에 유용)
+          startupProbe:
+             httpGet:
+               path: /health
+               port: http
+             failureThreshold: 30
+             periodSeconds: 10
+
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 30
+            initialDelaySeconds: 5 # StartupProbe 성공 후 동작
             periodSeconds: 10
           
           readinessProbe:
@@ -98,13 +112,14 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           
-          
+          # 컨테이너 레벨 보안 컨텍스트
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false # 권한 상승 금지 (SUID 비활성화)
+            readOnlyRootFilesystem: true # 루트 파일시스템 읽기 전용 (해킹 방지)
             capabilities:
-              drop: ["ALL"]
+              drop: ["ALL"] # 모든 리눅스 커널 권한 박탈 (필요시 add)
           
+          # 읽기 전용 파일시스템이므로 /tmp 쓰기 권한 별도 부여
           volumeMounts:
             - name: tmp
               mountPath: /tmp
