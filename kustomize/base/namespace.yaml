@@ -5,3 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-ci-cd
     app.kubernetes.io/part-of: k8s-ci-cd
+    # [보안] 2025년 필수: PSS(Pod Security Standards) 적용
+    # 'restricted' 정책을 적용하여 보안 취약한 파드 생성을 원천 차단합니다.
+    pod-security.kubernetes.io/enforce: restricted 
+    pod-security.kubernetes.io/enforce-version: "v1.34"
