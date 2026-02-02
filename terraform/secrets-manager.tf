@@ -58,12 +58,14 @@ resource "aws_secretsmanager_secret_version" "cicd" {
 }
 
 resource "helm_release" "external_secrets" {
-  name             = "external-secrets"
-  repository       = "https://charts.external-secrets.io"
-  chart            = "external-secrets"
-  version          = "0.9.11"
+  name       = "external-secrets"
+  repository = "https://charts.external-secrets.io"
+  chart      = "external-secrets"
+  # - 성능 최적화 및 AWS Secrets Manager 연동 속도 개선
+  version          = "0.12.0"
   namespace        = "external-secrets"
   create_namespace = true
+
   values = [yamlencode({
     installCRDs = true
     serviceAccount = {
@@ -75,8 +77,9 @@ resource "helm_release" "external_secrets" {
 }
 
 module "external_secrets_irsa" {
-  source                         = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version                        = "5.32.0"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # [2025.09 출시] IAM Module v5.50.0
+  version                        = "5.50.0"
   role_name                      = "${local.cluster_name}-external-secrets"
   attach_external_secrets_policy = true
   external_secrets_secrets_manager_arns = [
@@ -85,7 +88,7 @@ module "external_secrets_irsa" {
   oidc_providers = {
     main = {
       provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["app-${var.environment}:app-sa"]
+      namespace_service_accounts = ["external-secrets:external-secrets"]
     }
   }
   tags = local.common_tags
