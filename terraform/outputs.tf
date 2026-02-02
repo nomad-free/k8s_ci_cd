@@ -1,60 +1,76 @@
 output "environment" {
-  description = "현재 환경"
+  description = "Current environment"
   value       = var.environment
 }
+
 output "aws_region" {
-  description = "AWS 리전"
+  description = "AWS Region"
   value       = var.aws_region
 }
+
 output "vpc_id" {
   description = "VPC ID"
   value       = module.vpc.vpc_id
 }
+
 output "private_subnets" {
-  description = "Private 서브넷 ID 목록"
+  description = "List of Private Subnet IDs"
   value       = module.vpc.private_subnets
 }
+
 output "public_subnets" {
-  description = "Public 서브넷 ID 목록"
+  description = "List of Public Subnet IDs"
   value       = module.vpc.public_subnets
 }
+
 output "cluster_name" {
-  description = "EKS 클러스터 이름"
+  description = "EKS Cluster Name"
   value       = module.eks.cluster_name
 }
+
 output "cluster_endpoint" {
-  description = "EKS API 서버 엔드포인트"
+  description = "EKS API Server Endpoint"
   value       = module.eks.cluster_endpoint
 }
+
 output "cluster_arn" {
-  description = "EKS 클러스터 ARN"
+  description = "EKS Cluster ARN"
   value       = module.eks.cluster_arn
 }
+
 output "ecr_repository_url" {
-  description = "ECR 레포지토리 URL (docker push 대상)"
+  description = "ECR Repository URL (target for docker push)"
   value       = aws_ecr_repository.app.repository_url
 }
+
 output "github_actions_role_arn" {
-  description = "GitHub Actions용 IAM Role ARN"
+  description = "IAM Role ARN for GitHub Actions"
   value       = aws_iam_role.github_actions.arn
 }
+
 output "app_secrets_arn" {
-  description = "앱 시크릿 ARN"
+  description = "App Secrets ARN"
   value       = aws_secretsmanager_secret.app.arn
 }
+
 output "external_secrets_role_arn" {
-  description = "External Secrets용 IAM Role ARN"
+  description = "IAM Role ARN for External Secrets"
   value       = module.external_secrets_irsa.iam_role_arn
 }
+
+# [2025] Manual authentication configuration is no longer required due to Access Entry usage,
+# but the kubeconfig update command is retained for convenience.
 output "configure_kubectl" {
-  description = "kubectl 설정 명령어"
+  description = "Command to configure kubectl"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }
+
 output "ecr_login_command" {
-  description = "ECR 로그인 명령어"
+  description = "Command to login to ECR"
   value       = "aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${aws_ecr_repository.app.repository_url}"
 }
+
 output "app_domain" {
-  description = "애플리케이션 도메인"
+  description = "Application Domain"
   value       = var.environment == "prod" ? var.domain_name : "${var.environment}.${var.domain_name}"
 }
