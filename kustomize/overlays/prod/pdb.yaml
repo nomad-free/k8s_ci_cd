@@ -1,10 +1,11 @@
+# - policy/v1 API 사용 (v1beta1 제거됨)
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: app-pdb
 spec:
-  minAvailable: 1
+  minAvailable: 1 # 노드 점검 시에도 최소 1개 파드는 살아있어야 함
   selector:
     matchLabels:
-      app.kubernetes.io/name: k8s-ci-cd
-      app.kubernetes.io/component: app
+      app.kubernetes.io/name: app
+
