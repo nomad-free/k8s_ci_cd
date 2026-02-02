@@ -1,64 +1,31 @@
 name: Deploy to Dev
-on:
-  push:
-    branches: [develop]
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
 
-concurrency:
-  group: deploy-dev-${{ github.ref }}
-  cancel-in-progress: true # Dev는 빠른 피드백을 위해 이전 배포 취소
+# [변경 1] CI 워크플로우가 끝났을 때 트리거됨
+on:
+  workflow_run:
+    workflows: ["CI"] # ci.yml 파일 내의 'name'과 일치해야 함
+    types:
+      - completed
+    branches:
+      - develop
 
 permissions:
-  id-token: write # AWS OIDC 인증용
+  id-token: write
   contents: read
   packages: write
-  attestations: write # [Prod와 동일] Dev에서도 이미지 무결성 증명 생성
 
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: k8s-ci-cd-app
   EKS_CLUSTER_NAME: k8s-ci-cd-dev
   ENVIRONMENT: dev
-  NODE_VERSION: "22" # [2025 Standard] Node.js 22 (LTS)
 
 jobs:
-  # 1. CI 체크
-  ci:
-    name: 🔍 CI Checks
+  build-and-deploy:
+    name: 🏗️ Build & Deploy (Dev)
     runs-on: ubuntu-latest
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: app/package-lock.json
-
-      - name: 📦 Install dependencies
-        working-directory: ./app
-        run: npm ci
-
-      - name: 🔍 Run lint
-        working-directory: ./app
-        run: npm run lint
-
-      - name: 🧪 Run tests
-        working-directory: ./app
-        run: npm test
-
-  # 2. 빌드 및 ECR 푸시
-  build:
-    name: 🏗️ Build & Push
-    runs-on: ubuntu-latest
-    needs: ci
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
-      image_uri: ${{ steps.build.outputs.image_uri }}
+    # [중요] CI가 '성공'했을 때만 실행
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: 📥 Checkout code
@@ -75,76 +42,50 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: 📋 Generate image metadata
-        id: meta
-        run: |
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          IMAGE_TAG="${SHORT_SHA}-${TIMESTAMP}-dev"
-          echo "version=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-
       - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: 🐳 Build and push Docker image
-        id: build
         uses: docker/build-push-action@v6
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         with:
           context: ./app
           push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest-dev
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest-dev
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # [Prod와 동일] Dev 이미지도 보안 증명서 포함 (보안 테스트 목적)
-          provenance: true
-          sbom: true
-
-      - name: 📤 Output Image URI
-        run: |
-          echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
-
-  # 3. K8s 배포
-  deploy:
-    name: 🚀 Deploy to Dev
-    runs-on: ubuntu-latest
-    needs: build
-    environment: dev
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: 🔧 Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
-          version: "latest" # 또는 v1.30.0
+          version: "latest"
 
       - name: 🔗 Configure kubectl
         run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
-      - name: 📝 Update image in Kustomization
+      # Dev 환경은 별도의 롤아웃 대기나 보안 스캔 없이 즉시 반영
+      - name: 🚀 Deploy to Dev
         run: |
           cd kustomize/overlays/dev
-          kustomize edit set image app=${{ needs.build.outputs.image_uri }}
+          kustomize edit set image app=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest-dev
+          kubectl apply -k .
+          kubectl rollout status deployment/app -n app-dev --timeout=180s
 
-      - name: 🚀 Deploy to Kubernetes
-        run: kubectl apply -k kustomize/overlays/dev/
+      - name: 🏥 Run health check
+        run: |
+          kubectl port-forward svc/app-service 8080:80 -n app-dev &
+          PF_PID=$!
+          sleep 10
+          # [수정됨] 정확한 Health Check 경로 (/api/v1/health)
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/v1/health || echo "000")
+          kill $PF_PID 2>/dev/null || true
+          if [ "$HTTP_STATUS" == "200" ]; then
+            echo "✅ Health check passed!"
+          else
+            echo "❌ Health check failed! (HTTP: $HTTP_STATUS)"
+            exit 1
+          fi
 
-      - name: ⏳ Wait for rollout
-        run: kubectl rollout status deployment/app -n app-dev --timeout=300s
-
-      # [Prod와 동일] Slack 알림 (Block Kit 적용)
-      # Dev는 실패 시에만 알림을 보내거나, 간소화할 수 있지만 포맷은 통일함
+      # Dev 알림은 간소하게
       - name: 📢 Notify Slack
         if: always()
         uses: slackapi/slack-github-action@v2.0.0
@@ -152,54 +93,16 @@ jobs:
           webhook-type: webhook-trigger
           payload: |
             {
-              "text": "Dev Deployment: ${{ job.status }}",
+              "text": "Dev Deploy: ${{ job.status }}",
               "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "${{ job.status == 'success' && '🚀 Dev Deploy Success' || '❌ Dev Deploy Failed' }}",
-                    "emoji": true
-                  }
-                },
-                {
+                 {
                   "type": "section",
-                  "fields": [
-                    { "type": "mrkdwn", "text": "*Environment:*\nDevelopment 🛠️" },
-                    { "type": "mrkdwn", "text": "*Version:*\n`${{ needs.build.outputs.image_tag }}`" },
-                    { "type": "mrkdwn", "text": "*Status:*\n${{ job.status }}" }
-                  ]
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Dev Deploy Finished* :${{ job.status == 'success' && 'white_check_mark' || 'x' }}:\nBranch: `develop`"
+                  }
                 }
               ]
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-  # 4. 헬스 체크
-  health-check:
-    name: 🏥 Health Check
-    runs-on: ubuntu-latest
-    needs: deploy
-    steps:
-      - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: 🔗 Configure kubectl
-        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
-
-      - name: 🏥 Run health check
-        run: |
-          kubectl port-forward svc/app-service 8080:80 -n app-dev &
-          PF_PID=$!
-          sleep 10
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
-          kill $PF_PID 2>/dev/null || true
-          if [ "$HTTP_STATUS" == "200" ]; then
-            echo "✅ Health check passed!"
-          else
-            echo "❌ Health check failed!"
-            exit 1
-          fi

@@ -1,64 +1,32 @@
 name: Deploy to Prod
+
+# [변경 1] Push가 아니라, CI 워크플로우가 끝났을 때 트리거됨
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"] # ci.yml 파일 내의 'name' 값과 일치해야 함
+    types:
+      - completed
     branches:
       - main
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
-      - ".gitignore"
-      - "terraform/**"
-
-concurrency:
-  group: deploy-prod-${{ github.ref }}
-  cancel-in-progress: false # [중요] 운영 배포는 안전을 위해 취소하지 않음
 
 permissions:
   id-token: write
   contents: read
   packages: write
-  attestations: write
 
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: k8s-ci-cd-app
   EKS_CLUSTER_NAME: k8s-ci-cd-prod
   ENVIRONMENT: prod
-  NODE_VERSION: "22" # [2025 Standard] Node.js 22 (LTS)
 
 jobs:
-  # 1. CI 체크 (Dev와 동일)
-  ci:
-    name: 🔍 CI Checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: app/package-lock.json
-
-      - name: 📦 Install dependencies
-        working-directory: ./app
-        run: npm ci
-
-      - name: 🔍 Run lint
-        working-directory: ./app
-        run: npm run lint
-
-      - name: 🧪 Run tests
-        working-directory: ./app
-        run: npm test
-
-  # 2. 보안 스캔 (Prod 필수)
+  # 1. 보안 스캔 (Prod 필수) - CI 잡은 제거함 (앞단에서 했으므로)
   security-scan:
     name: 🔒 Security Scan
     runs-on: ubuntu-latest
-    needs: ci
+    # [중요] CI가 '성공'했을 때만 실행
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -71,11 +39,11 @@ jobs:
           severity: "CRITICAL,HIGH"
           exit-code: "1"
 
-  # 3. 빌드 및 ECR 푸시
+  # 2. 빌드 및 ECR 푸시
   build:
     name: 🏗️ Build & Push
     runs-on: ubuntu-latest
-    needs: [ci, security-scan]
+    needs: security-scan
     outputs:
       image_uri: ${{ steps.build.outputs.image_uri }}
       image_tag: ${{ steps.meta.outputs.version }}
@@ -124,7 +92,7 @@ jobs:
       - name: 📤 Output URI
         run: echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
 
-  # 4. 쿠버네티스 배포 및 자동 롤백
+  # 3. 쿠버네티스 배포 및 자동 롤백
   deploy:
     name: 🚀 Deploy to Prod
     runs-on: ubuntu-latest
@@ -181,7 +149,7 @@ jobs:
             exit 1
           fi
 
-      # Slack 알림 (Dev와 동일한 포맷 사용)
+      # Slack 알림
       - name: 📢 Notify Slack
         if: always()
         uses: slackapi/slack-github-action@v2.0.0
@@ -222,7 +190,7 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-  # 5. 스모크 테스트 (Prod 전용)
+  # 4. 스모크 테스트 (Prod 전용)
   verify:
     name: 🧪 Smoke Test
     runs-on: ubuntu-latest
@@ -240,12 +208,13 @@ jobs:
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
           kubectl port-forward svc/app-service 8080:80 -n app-prod &
           PF_PID=$!
-          sleep 5
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
+          sleep 10
+          # [수정됨] 정확한 Health Check 경로 (/api/v1/health)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/v1/health)
           kill $PF_PID 2>/dev/null || true
           if [ "$HTTP_CODE" == "200" ]; then
             echo "✅ Smoke Test Passed!"
           else
-            echo "❌ Smoke Test Failed!"
+            echo "❌ Smoke Test Failed! (HTTP: $HTTP_CODE)"
             exit 1
           fi
