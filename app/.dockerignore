@@ -1,0 +1,23 @@
+# 테스트 파일
+*.test.js
+*.spec.js
+__tests__/
+coverage/
+
+# 개발 파일
+.git
+.gitignore
+README.md
+Dockerfile
+.dockerignore
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# 환경 파일
+.env*

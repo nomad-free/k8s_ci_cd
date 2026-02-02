@@ -1,0 +1,324 @@
+name: Deploy to Prod
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+      - ".gitignore"
+      - "terraform/**"
+concurrency:
+  group: deploy-prod-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  id-token: write
+  contents: read
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: k8s-ci-cd-app
+  EKS_CLUSTER_NAME: k8s-ci-cd-prod
+  ENVIRONMENT: prod
+jobs:
+  ci:
+    name: 🔍 CI Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - name: 📦 Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: 🔍 Run lint
+        working-directory: ./app
+        run: npm run lint
+
+      - name: 🧪 Run tests
+        working-directory: ./app
+        run: npm test
+
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: ci
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+  build:
+    name: 🏗️ Build & Push
+    runs-on: ubuntu-latest
+    needs: [ci, security-scan]
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_uri: ${{ steps.build.outputs.image_uri }}
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔐 Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 📋 Generate image metadata
+        id: meta
+        run: |
+
+          VERSION=$(cat VERSION 2>/dev/null || echo "1.0.0")
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          IMAGE_TAG="v${VERSION}-${SHORT_SHA}-prod"
+
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "📌 Image Tag: ${IMAGE_TAG}"
+
+      - name: 🐳 Build and push Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        run: |
+          cd app
+
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          docker build \
+            --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg VERSION=${IMAGE_TAG} \
+            -t ${IMAGE_URI} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest-prod \
+            .
+
+          docker push ${IMAGE_URI}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest-prod
+
+          echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "✅ Pushed: ${IMAGE_URI}"
+
+  deploy:
+    name: 🚀 Deploy to Prod
+    runs-on: ubuntu-latest
+    needs: build
+    environment: prod
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔑 Get secrets from Secrets Manager
+        id: secrets
+        run: |
+          SECRETS=$(aws secretsmanager get-secret-value \
+            --secret-id k8s-ci-cd/prod/cicd-secrets \
+            --query SecretString \
+            --output text 2>/dev/null || echo '{}')
+
+          SLACK_WEBHOOK=$(echo $SECRETS | jq -r '.SLACK_WEBHOOK_URL // empty')
+          if [ -n "$SLACK_WEBHOOK" ] && [ "$SLACK_WEBHOOK" != "REPLACE_ME" ]; then
+            echo "::add-mask::${SLACK_WEBHOOK}"
+            echo "slack_webhook=${SLACK_WEBHOOK}" >> $GITHUB_OUTPUT
+            echo "has_slack=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_slack=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🔧 Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "latest"
+
+      - name: 🔗 Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: 📸 Save current revision
+        id: current
+        run: |
+          REVISION=$(kubectl get deployment app -n app-prod \
+            -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}' \
+            2>/dev/null || echo "0")
+          echo "revision=${REVISION}" >> $GITHUB_OUTPUT
+          echo "📌 Current revision: ${REVISION}"
+
+      - name: 📝 Update image in Kustomization
+        run: |
+          cd kustomize/overlays/prod
+          kustomize edit set image app=${{ needs.build.outputs.image_uri }}
+
+      - name: 🚀 Deploy to Kubernetes
+        id: deploy
+        run: |
+          echo "🚀 Deploying to Prod environment..."
+          kubectl apply -k kustomize/overlays/prod/
+
+      - name: ⏳ Wait for rollout
+        id: rollout
+        run: |
+          echo "⏳ Waiting for deployment rollout..."
+          if kubectl rollout status deployment/app -n app-prod --timeout=300s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: ⏪ Rollback on failure
+        if: failure() && steps.rollout.outputs.status == 'failed'
+        run: |
+          echo "⚠️ 배포 실패! 롤백 시작..."
+          kubectl rollout undo deployment/app -n app-prod
+          kubectl rollout status deployment/app -n app-prod --timeout=300s
+          echo "✅ 롤백 완료!"
+
+      - name: ✅ Verify deployment
+        if: success()
+        run: |
+          echo "=== 📊 Deployment Status ==="
+          kubectl get deployment app -n app-prod
+
+          echo ""
+          echo "=== 🔲 Pod Status ==="
+          kubectl get pods -n app-prod -l app.kubernetes.io/name=k8s-ci-cd
+
+          echo ""
+          echo "=== 📈 HPA Status ==="
+          kubectl get hpa -n app-prod
+
+      - name: 📢 Notify Slack - Deploy Success
+        if: success() && steps.secrets.outputs.has_slack == 'true'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          custom_payload: |
+            {
+              attachments: [{
+                color: '
+                title: '🚀 Prod 배포 성공!',
+                fields: [
+                  { title: 'Repository', value: '${{ github.repository }}', short: true },
+                  { title: 'Image', value: '${{ needs.build.outputs.image_tag }}', short: true },
+                  { title: 'URL', value: 'https://playdevops.xyz', short: true },
+                  { title: 'Deployed by', value: '${{ github.actor }}', short: true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ steps.secrets.outputs.slack_webhook }}
+        continue-on-error: true
+
+      - name: 📢 Notify Slack - Deploy Failed
+        if: failure() && steps.secrets.outputs.has_slack == 'true'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          custom_payload: |
+            {
+              attachments: [{
+                color: '
+                title: '❌ Prod 배포 실패!',
+                text: '자동 롤백이 실행되었습니다.',
+                fields: [
+                  { title: 'Repository', value: '${{ github.repository }}', short: true },
+                  { title: 'Image', value: '${{ needs.build.outputs.image_tag }}', short: true },
+                  { title: 'Action', value: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}', short: false }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ steps.secrets.outputs.slack_webhook }}
+        continue-on-error: true
+
+  health-check:
+    name: 🏥 Health Check
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔗 Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: 🏥 Run health check
+        run: |
+          echo "🏥 Running health check..."
+
+          kubectl port-forward svc/app-service 8080:80 -n app-prod &
+          PF_PID=$!
+          sleep 10
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
+
+          kill $PF_PID 2>/dev/null || true
+
+          if [ "$HTTP_STATUS" == "200" ]; then
+            echo "✅ Health check passed! (HTTP $HTTP_STATUS)"
+          else
+            echo "❌ Health check failed! (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+
+      - name: 🧪 Run smoke test
+        run: |
+          echo "🧪 Running smoke test..."
+
+          kubectl port-forward svc/app-service 8080:80 -n app-prod &
+          PF_PID=$!
+          sleep 5
+
+
+          RESPONSE=$(curl -s http://localhost:8080/ || echo "error")
+
+          kill $PF_PID 2>/dev/null || true
+
+          if [ "$RESPONSE" != "error" ]; then
+            echo "✅ Smoke test passed!"
+          else
+            echo "❌ Smoke test failed!"
+            exit 1
+          fi
