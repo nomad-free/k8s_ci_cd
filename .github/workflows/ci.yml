@@ -58,7 +58,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 🔍 Run Trivy vulnerability scanner
-# [2025.08 출시] trivy-action v0.28.0
+        # [2025.08 출시] trivy-action v0.28.0
         # - AI 기반 취약점 오탐(False Positive) 필터링 추가
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -69,7 +69,7 @@ jobs:
           severity: "CRITICAL,HIGH"
 
       - name: 📤 Upload scan results
-# [2025.01 출시] codeql-action/upload-sarif@v4
+        # [2025.01 출시] codeql-action/upload-sarif@v4
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
@@ -82,20 +82,16 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: 🔧 Set up Docker Buildx
-      # [2025.05 출시] docker/setup-buildx-action@v4
-        # - Buildkit v0.15+ 기본 지원 (빌드 속도 30% 향상)
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3 # v4를 v3로 변경하세요
 
       - name: 🏗️ Build Docker image
-      # [2025.06 출시] docker/build-push-action@v7
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5 # v7을 v5로 변경하세요
         with:
           context: ./app
           push: false
           tags: test-app:${{ github.sha }}
-          # [2025 Best Practice] GitHub Actions 캐시 백엔드 활용
           cache-from: type=gha
           cache-to: type=gha,mode=max
