@@ -1,4 +1,6 @@
-# - 애플리케이션 파드(Pod)를 관리하고 배포하는 핵심 리소스입니다.
+# =============================================================================
+# Deployment - 애플리케이션 파드(Pod)를 관리하고 배포하는 핵심 리소스
+# =============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,64 +10,88 @@ metadata:
     app.kubernetes.io/component: backend
 spec:
   replicas: 1
-  revisionHistoryLimit: 5 ## 롤백을 위해 최근 5개 버전 유지
-  
-  
+  revisionHistoryLimit: 5 # 롤백을 위해 최근 5개 버전 유지
+
+  # 무중단 배포 전략 (Rolling Update)
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0    # 배포 중에도 서비스 중단 없음 (0개만 죽을 수 있음)
-      maxSurge: 1          # 배포 중에 파드 1개를 더 띄움
-  
+      maxUnavailable: 0 # 배포 중에도 서비스 중단 없음
+      maxSurge: 1 # 배포 중에 파드 1개를 더 띄움
+
   selector:
     matchLabels:
       app.kubernetes.io/name: app
-  
+
   template:
     metadata:
       labels:
         app.kubernetes.io/name: app
         app.kubernetes.io/component: backend
-    
+
     spec:
       serviceAccountName: app-sa
-      # 서비스 어카운트 토큰 자동 마운트 방지 (필요시 명시적 마운트)
       automountServiceAccountToken: true
-      
-      # Pod Security Standards 'Restricted' 준수 설정
-      # - 루트 권한 실행 금지 및 권한 상승 방지 필수
+
+      # Pod Security Standards 'Restricted' 준수
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001 # Dockerfile의 nodejs 유저 UID
+        runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
-        seccompProfile:      # [New] 시스템 콜 제한 프로필 적용
+        seccompProfile:
           type: RuntimeDefault
-      
+
       containers:
         - name: app
-          image: app:latest    
+          image: app:latest
           imagePullPolicy: Always
-          
+
           ports:
             - name: http
               containerPort: 3000
-          
-          
+
+          # =================================================================
+          # 🔐 환경변수 설정
+          # AWS Secrets Manager → ExternalSecret → K8s Secret → 여기로 주입
+          # =================================================================
           env:
+            # 기본 설정
             - name: PORT
               value: "3000"
+            - name: NODE_ENV
+              value: "production"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
 
-            # Secrets Manager에서 가져온 비밀값 주입
+            # -----------------------------------------------------------------
+            # 📦 데이터베이스 설정 (AWS Secrets Manager에서 주입)
+            # -----------------------------------------------------------------
             - name: DB_HOST
               valueFrom:
                 secretKeyRef:
+                  name: app-secrets # K8s Secret 이름
+                  key: DB_HOST # Secret 내의 키
+                  optional: true # 시크릿 없어도 Pod 시작 가능
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
                   name: app-secrets
-                  key: DB_HOST
+                  key: DB_PORT
+                  optional: true
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_NAME
+                  optional: true
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_USER
                   optional: true
             - name: DB_PASSWORD
               valueFrom:
@@ -73,14 +99,40 @@ spec:
                   name: app-secrets
                   key: DB_PASSWORD
                   optional: true
+
+            # -----------------------------------------------------------------
+            # 🔑 외부 API 키 (AWS Secrets Manager에서 주입)
+            # -----------------------------------------------------------------
             - name: API_KEY
               valueFrom:
                 secretKeyRef:
                   name: app-secrets
                   key: API_KEY
                   optional: true
-          
-          
+            - name: API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: API_SECRET
+                  optional: true
+
+            # -----------------------------------------------------------------
+            # 🔐 보안 토큰 (AWS Secrets Manager에서 주입)
+            # -----------------------------------------------------------------
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: JWT_SECRET
+                  optional: true
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: ENCRYPTION_KEY
+                  optional: true
+
+          # 리소스 제한
           resources:
             requests:
               cpu: "100m"
@@ -88,45 +140,46 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
-          
-          # [Best Practice] StartupProbe 추가
-          # - 앱이 처음 뜰 때 초기화 시간을 벌어줍니다. (느린 앱에 유용)
-          startupProbe:
-             httpGet:
-               path: /health
-               port: http
-             failureThreshold: 30
-             periodSeconds: 10
 
+          # Startup Probe (앱 초기화 시간 확보)
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+
+          # Liveness Probe (앱이 살아있는지)
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 5 # StartupProbe 성공 후 동작
+            initialDelaySeconds: 5
             periodSeconds: 10
-          
+
+          # Readiness Probe (트래픽 받을 준비 됐는지)
           readinessProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
-          
-          # 컨테이너 레벨 보안 컨텍스트
+
+          # 컨테이너 보안 설정
           securityContext:
-            allowPrivilegeEscalation: false # 권한 상승 금지 (SUID 비활성화)
-            readOnlyRootFilesystem: true # 루트 파일시스템 읽기 전용 (해킹 방지)
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              drop: ["ALL"] # 모든 리눅스 커널 권한 박탈 (필요시 add)
-          
-          # 읽기 전용 파일시스템이므로 /tmp 쓰기 권한 별도 부여
+              drop: ["ALL"]
+
+          # 읽기 전용 파일시스템이므로 /tmp 쓰기 권한 부여
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-      
+
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 100Mi
-      
+
       terminationGracePeriodSeconds: 30

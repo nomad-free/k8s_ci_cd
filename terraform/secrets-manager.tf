@@ -1,7 +1,6 @@
 resource "aws_secretsmanager_secret" "app" {
-  name        = "${local.project_name}/${var.environment}/app-secrets"
-  description = "Application secrets for ${var.environment} environment"
-
+  name                    = "${local.project_name}/${var.environment}/app-secrets"
+  description             = "Application secrets (DB, API Key, JWT, Encryption) for ${var.environment}"
   recovery_window_in_days = var.environment == "prod" ? 30 : 7
   tags                    = local.common_tags
 }
@@ -9,6 +8,7 @@ resource "aws_secretsmanager_secret" "app" {
 resource "aws_secretsmanager_secret_version" "app" {
   secret_id = aws_secretsmanager_secret.app.id
 
+  # [중요] 초기값은 더미(REPLACE_ME)입니다. 배포 후 AWS 콘솔에서 실제 값으로 변경해야 합니다.
   secret_string = jsonencode({
     DB_HOST     = "REPLACE_ME"
     DB_PORT     = "5432"
@@ -16,11 +16,10 @@ resource "aws_secretsmanager_secret_version" "app" {
     DB_USER     = "REPLACE_ME"
     DB_PASSWORD = "REPLACE_ME"
 
-    API_KEY    = "REPLACE_ME"
-    API_SECRET = "REPLACE_ME"
+    API_KEY = "REPLACE_ME" # 서버 간 통신용 (M2M)
 
-    JWT_SECRET     = "REPLACE_ME"
-    ENCRYPTION_KEY = "REPLACE_ME"
+    JWT_SECRET     = "REPLACE_ME" # 관리자 로그인 토큰 발급용
+    ENCRYPTION_KEY = "REPLACE_ME" # 민감 데이터 DB 저장 시 암호화용 (32byte)
   })
 
   lifecycle {
@@ -30,7 +29,7 @@ resource "aws_secretsmanager_secret_version" "app" {
 
 resource "aws_secretsmanager_secret" "cicd" {
   name                    = "${local.project_name}/${var.environment}/cicd-secrets"
-  description             = "CI/CD secrets for ${var.environment} environment"
+  description             = "CI/CD pipeline secrets for ${var.environment}"
   recovery_window_in_days = 7
   tags                    = local.common_tags
 }
@@ -38,25 +37,17 @@ resource "aws_secretsmanager_secret" "cicd" {
 resource "aws_secretsmanager_secret_version" "cicd" {
   secret_id = aws_secretsmanager_secret.cicd.id
 
-  # 주의: CI/CD 시크릿 키 값들이 app 시크릿과 동일하게 복사되어 있는 것 같습니다.
-  # 실제 파일(secrets-manager.tf) 내용에 맞춰 SLACK_WEBHOOK 등으로 수정이 필요할 수 있습니다.
+  # CI/CD 전용 시크릿 (앱 시크릿과 다릅니다)
   secret_string = jsonencode({
-    DB_HOST        = "REPLACE_ME"
-    DB_PORT        = "5432"
-    DB_NAME        = "REPLACE_ME"
-    DB_USER        = "REPLACE_ME"
-    DB_PASSWORD    = "REPLACE_ME"
-    API_KEY        = "REPLACE_ME"
-    API_SECRET     = "REPLACE_ME"
-    JWT_SECRET     = "REPLACE_ME"
-    ENCRYPTION_KEY = "REPLACE_ME"
+    SLACK_WEBHOOK_URL    = "REPLACE_ME"
+    CLOUDFLARE_API_TOKEN = "REPLACE_ME"
+    CLOUDFLARE_ZONE_ID   = "REPLACE_ME"
   })
 
   lifecycle {
     ignore_changes = [secret_string]
   }
 }
-
 resource "helm_release" "external_secrets" {
   name       = "external-secrets"
   repository = "https://charts.external-secrets.io"
