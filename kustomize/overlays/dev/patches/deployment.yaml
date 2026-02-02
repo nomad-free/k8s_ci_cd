@@ -12,11 +12,11 @@ spec:
             - name: NODE_ENV
               value: "development"
             - name: LOG_LEVEL
-              value: "debug"
+              value: "debug" # 디버깅을 위해 로그 자세히
           resources:
             requests:
-              cpu: "50m"
+              cpu: "50m" # 최소 자원만 할당
               memory: "64Mi"
             limits:
               cpu: "200m"
-              memory: "128Mi"
+              memory: "128Mi" # OOM 방지를 위한 최소한의 한계
