@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.16"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12"
+    }
   }
   backend "s3" {
     bucket       = "plydevops-infra-tf-dev"
@@ -40,34 +44,21 @@ provider "aws" {
     }
   }
 }
+# EKS 인증 토큰 데이터 소스
+data "aws_eks_cluster_auth" "this" {
+  name = module.eks.cluster_name
+}
+
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1"
-    command     = "aws"
-    args = [
-      "eks",
-      "get-token",
-      "--cluster-name", module.eks.cluster_name,
-      "--region", var.aws_region
-    ]
-  }
+  token                  = data.aws_eks_cluster_auth.this.token
 }
+
 provider "helm" {
   kubernetes {
     host                   = module.eks.cluster_endpoint
     cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-    exec {
-      api_version = "client.authentication.k8s.io/v1"
-      command     = "aws"
-      args = [
-        "eks",
-        "get-token",
-        "--cluster-name", module.eks.cluster_name,
-        "--region", var.aws_region
-      ]
-    }
+    token                  = data.aws_eks_cluster_auth.this.token
   }
 }

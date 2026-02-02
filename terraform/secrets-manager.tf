@@ -65,7 +65,7 @@ resource "helm_release" "external_secrets" {
       name   = "external-secrets"
     }
   })]
-  depends_on = [module.eks.eks_managed_node_groups, module.external_secrets_irsa]
+  depends_on = [time_sleep.wait_for_eks, module.external_secrets_irsa]
 }
 
 module "external_secrets_irsa" {

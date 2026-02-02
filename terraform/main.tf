@@ -146,3 +146,11 @@ resource "aws_ecr_lifecycle_policy" "app" {
     ]
   })
 }
+
+# EKS 클러스터가 완전히 준비될 때까지 대기
+# Helm 리소스들이 이 리소스에 depends_on으로 연결됩니다
+resource "time_sleep" "wait_for_eks" {
+  depends_on = [module.eks]
+
+  create_duration = "30s"
+}
