@@ -1,41 +1,39 @@
 variable "environment" {
-  description = "배포 환경 (dev 또는 prod)"
+  description = "Deployment environment (dev or prod)"
   type        = string
   validation {
     condition     = contains(["dev", "prod"], var.environment)
-    error_message = "environment는 'dev' 또는 'prod'만 가능합니다."
+    error_message = "The environment must be either 'dev' or 'prod'."
   }
 }
+
 variable "aws_region" {
-  description = "AWS 리전"
+  description = "AWS Region"
   type        = string
   default     = "us-east-1"
 }
+
 variable "domain_name" {
-  description = "메인 도메인 (Cloudflare에서 관리)"
+  description = "Main domain name (Managed by Cloudflare)"
   type        = string
   default     = "playdevops.xyz"
 }
+
 variable "app_port" {
-  description = "애플리케이션 포트"
+  description = "Application port"
   type        = number
   default     = 3000
 }
+
 variable "eks_cluster_version" {
-  description = "EKS Kubernetes 버전"
+  description = "EKS Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.34"
 }
+
 locals {
-
-
-
   project_name = "k8s-ci-cd"
   cluster_name = "${local.project_name}-${var.environment}"
-
-
-
-
 
   vpc_config = {
     dev = {
@@ -49,11 +47,6 @@ locals {
       public_subnets  = ["10.1.101.0/24", "10.1.102.0/24", "10.1.103.0/24"]
     }
   }
-
-
-
-
-
 
   node_config = {
     dev = {
@@ -72,8 +65,6 @@ locals {
     }
   }
 
-
-
   env_config = {
     dev = {
       single_nat_gateway  = true
@@ -86,8 +77,6 @@ locals {
       ingress_replicas    = 2
     }
   }
-
-
 
   common_tags = {
     Project     = local.project_name
