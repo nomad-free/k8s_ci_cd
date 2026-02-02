@@ -3,6 +3,7 @@ kind: Ingress
 metadata:
   name: app-ingress
   annotations:
+    # 운영 환경 요청 제한 (DDoS 방지 기초)
     nginx.ingress.kubernetes.io/limit-rps: "100"
 spec:
   rules:
@@ -13,6 +14,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: app-service
+                name: app-svc
                 port:
                   number: 80
