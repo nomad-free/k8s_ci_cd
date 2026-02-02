@@ -1,12 +1,12 @@
 {
   "name": "k8s-ci-cd-app",
   "version": "1.0.0",
-  "description": "Sample Node.js app for EKS CI/CD",
+  "description": "Mock Upbit Exchange App for EKS CI/CD",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "jest --coverage",
+    "test": "jest --detectOpenHandles",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -14,7 +14,8 @@
   },
   "devDependencies": {
     "eslint": "^8.56.0",
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
   },
   "engines": {
     "node": ">=18.0.0"

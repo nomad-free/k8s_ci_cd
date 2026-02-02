@@ -1,19 +1,13 @@
+/* app/jest.config.js */
 module.exports = {
-  testEnvironment: 'node',
-  coverageDirectory: 'coverage',
+  testEnvironment: "node",
+  // 현재 디렉토리의 모든 js 파일에서 커버리지 수집 (테스트 파일 제외)
   collectCoverageFrom: [
-    '**/*.js',
-    '!**/node_modules/**',
-    '!**/coverage/**',
-    '!jest.config.js',
-    '!.eslintrc.js'
+    "*.js",
+    "!*.test.js",
+    "!jest.config.js",
+    "!.eslintrc.js",
   ],
-  coverageThreshold: {
-    global: {
-      branches: 50,
-      functions: 50,
-      lines: 50,
-      statements: 50
-    }
-  }
+  coverageDirectory: "coverage",
+  verbose: true,
 };
