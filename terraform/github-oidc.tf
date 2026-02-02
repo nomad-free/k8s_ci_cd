@@ -156,3 +156,40 @@ resource "aws_eks_access_policy_association" "github_actions" {
     type = "cluster"
   }
 }
+
+
+# 추가: Terraform 실행을 위한 IAM 정책
+resource "aws_iam_role_policy" "terraform_access" {
+  name = "terraform-access"
+  role = aws_iam_role.github_actions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          # VPC 관련
+          "ec2:*",
+          # EKS 관련
+          "eks:*",
+          # IAM 관련 (IRSA용)
+          "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy", "iam:PutRolePolicy", "iam:GetRole",
+          "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
+          "iam:CreateOpenIDConnectProvider", "iam:DeleteOpenIDConnectProvider",
+          "iam:TagRole", "iam:PassRole",
+          # Secrets Manager
+          "secretsmanager:*",
+          # S3 (State 저장용)
+          "s3:*",
+          # CloudWatch Logs
+          "logs:*",
+          # KMS (암호화)
+          "kms:*"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
