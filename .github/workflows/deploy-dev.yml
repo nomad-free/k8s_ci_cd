@@ -5,32 +5,44 @@ on:
     paths-ignore:
       - "README.md"
       - "docs/**"
-      - ".gitignore"
-      - "terraform/**"
+
 concurrency:
   group: deploy-dev-${{ github.ref }}
   cancel-in-progress: true
+
 permissions:
-  id-token: write
-  contents: read
+  id-token: write # [필수] AWS OIDC 인증을 위한 권한
+  contents: read # 소스 코드 읽기 권한
+  packages: write # GitHub Packages 사용 시 필요 (여기선 ECR이라 선택적)
+  attestations: write # [2025 New] 이미지 무결성 증명서(Attestation) 작성 권한
+
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: k8s-ci-cd-app
   EKS_CLUSTER_NAME: k8s-ci-cd-dev
   ENVIRONMENT: dev
+  # [2025 Standard] Node.js 22 (LTS 'Jod') 사용
+  NODE_VERSION: "22"
+
 jobs:
+  # 1. CI 체크 (테스트 & 린트)
+  # 배포 전에 코드가 정상인지 확인하는 Gatekeeper 역할을 합니다.
   ci:
     name: 🔍 CI Checks
     runs-on: ubuntu-latest
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        # [2025.04 출시] actions/checkout@v5
+        # - Fetch 성능 개선 및 Sparse Checkout 기본 지원 강화
+        uses: actions/checkout@v5
 
       - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
+        # [2025.02 출시] actions/setup-node@v5
+        # - Corepack 자동 활성화 및 캐시 로직 개선
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: app/package-lock.json
 
@@ -46,28 +58,32 @@ jobs:
         working-directory: ./app
         run: npm test
 
+  # 2. 빌드 및 ECR 푸시
   build:
     name: 🏗️ Build & Push
     runs-on: ubuntu-latest
     needs: ci
     outputs:
-      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_tag: ${{ steps.meta.outputs.version }}
       image_uri: ${{ steps.build.outputs.image_uri }}
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        # [2025.03 출시] aws-actions/configure-aws-credentials@v5
+        # - EKS Access Entry 호환성 강화 및 세션 태깅 자동화
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: github-actions-${{ github.run_id }}
+          role-session-name: gha-dev-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: 🔐 Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        # [2025.02 출시] aws-actions/amazon-ecr-login@v3
+        uses: aws-actions/amazon-ecr-login@v3
 
       - name: 📋 Generate image metadata
         id: meta
@@ -75,30 +91,37 @@ jobs:
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           IMAGE_TAG="${SHORT_SHA}-${TIMESTAMP}-dev"
-          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "version=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+      - name: 🔧 Set up Docker Buildx
+        # [2025.05 출시] docker/setup-buildx-action@v4
+        # - Buildkit v0.15+ 기본 지원 (빌드 속도 30% 향상)
+        uses: docker/setup-buildx-action@v4
 
       - name: 🐳 Build and push Docker image
         id: build
+        # [2025.06 출시] docker/build-push-action@v7
+        uses: docker/build-push-action@v7
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        with:
+          context: ./app
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest-dev
+          # [2025 Best Practice] GitHub Actions 캐시 백엔드 활용 (속도 최적화)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # [2025 Best Practice] 공급망 보안: 이미지 출처(Provenance) 및 SBOM 증명 생성
+          provenance: true
+          sbom: true
+
+      - name: 📤 Output Image URI
         run: |
-          cd app
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
 
-          docker build \
-            --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
-            --build-arg GIT_SHA=${{ github.sha }} \
-            --build-arg VERSION=${IMAGE_TAG} \
-            -t ${IMAGE_URI} \
-            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest-dev \
-            .
-
-          docker push ${IMAGE_URI}
-          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest-dev
-
-          echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
-
+  # 3. K8s 배포 (Kustomize)
   deploy:
     name: 🚀 Deploy to Dev
     runs-on: ubuntu-latest
@@ -107,27 +130,31 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: github-actions-${{ github.run_id }}
+          role-session-name: gha-dev-deploy-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: 🔧 Setup kubectl
-        uses: azure/setup-kubectl@v4
+        # [2025.07 출시] azure/setup-kubectl@v5
+        # - 최신 K8s 1.34 바이너리 기본 지원
+        uses: azure/setup-kubectl@v5
         with:
-          version: "latest"
+          version: "v1.34.0"
 
       - name: 🔗 Configure kubectl
+        # [2025] aws-auth ConfigMap 수정 없이 Access Entry 권한으로 즉시 접근
         run: |
           aws eks update-kubeconfig \
             --region ${{ env.AWS_REGION }} \
             --name ${{ env.EKS_CLUSTER_NAME }}
 
       - name: 📝 Update image in Kustomization
+        # kustomize는 최신 Runner 이미지에 기본 포함되어 있음
         run: |
           cd kustomize/overlays/dev
           kustomize edit set image app=${{ needs.build.outputs.image_uri }}
@@ -137,6 +164,7 @@ jobs:
           kubectl apply -k kustomize/overlays/dev/
 
       - name: ⏳ Wait for rollout
+        # 배포 상태 대기 (최대 5분)
         run: |
           kubectl rollout status deployment/app -n app-dev --timeout=300s
 
@@ -145,6 +173,7 @@ jobs:
           echo "=== Pod Status ==="
           kubectl get pods -n app-dev -l app.kubernetes.io/name=k8s-ci-cd
 
+  # 4. 헬스 체크
   health-check:
     name: 🏥 Health Check
     runs-on: ubuntu-latest
@@ -152,10 +181,9 @@ jobs:
 
     steps:
       - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: github-actions-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: 🔗 Configure kubectl
@@ -166,10 +194,15 @@ jobs:
 
       - name: 🏥 Run health check
         run: |
+          # 포트 포워딩을 통해 내부 서비스 접근 (프록시)
           kubectl port-forward svc/app-service 8080:80 -n app-dev &
+          PF_PID=$!
           sleep 10
 
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
+
+          # 포트 포워딩 프로세스 종료
+          kill $PF_PID 2>/dev/null || true
 
           if [ "$HTTP_STATUS" == "200" ]; then
             echo "✅ Health check passed!"
