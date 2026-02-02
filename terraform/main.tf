@@ -4,10 +4,10 @@ data "aws_availability_zones" "available" {
     values = ["opt-in-not-required"]
   }
 }
-data "aws_caller_identity" "current" {}
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "6.0.0"
+  version = "5.13.0"
   name    = "${local.cluster_name}-vpc"
   cidr    = local.vpc_config[var.environment].cidr
 
@@ -35,7 +35,7 @@ module "vpc" {
 }
 module "eks" {
   source          = "terraform-aws-modules/eks/aws"
-  version         = "22.0.0"
+  version         = "~> 20.31"
   cluster_name    = local.cluster_name
   cluster_version = var.eks_cluster_version
 
@@ -62,13 +62,14 @@ module "eks" {
         }
       })
     }
-    aws-ebs-csi-driver = { most_recent = true }
+    aws-ebs-csi-driver = {
+      most_recent              = true
+      service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
+    }
   }
 
-
-
   eks_managed_node_group_defaults = {
-    ami_type = "AL2_x86_64"
+    ami_type = "AL2023_x86_64_STANDARD"
   }
   eks_managed_node_groups = {
     main = {
@@ -98,6 +99,23 @@ module "eks" {
   authentication_mode = "API_AND_CONFIG_MAP"
   tags                = local.common_tags
 }
+
+# EBS CSI 전용 IAM Role (IRSA)
+module "ebs_csi_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name             = "${local.cluster_name}-ebs-csi"
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
 resource "aws_ecr_repository" "app" {
   name                 = "${local.project_name}-app"
   image_tag_mutability = "MUTABLE"

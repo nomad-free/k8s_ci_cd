@@ -1,9 +1,11 @@
 resource "helm_release" "ingress_nginx" {
-  name       = "ingress-nginx"
+  name = "ingress-nginx"
+
+
   repository = "https://kubernetes.github.io/ingress-nginx"
   chart      = "ingress-nginx"
   # - K8s 1.34 호환성 확보 및 HTTP/3 지원 강화
-  version          = "4.15.0"
+  version          = "4.11.3"
   namespace        = "ingress-nginx"
   create_namespace = true
   values = [yamlencode({
@@ -59,5 +61,5 @@ resource "helm_release" "ingress_nginx" {
       ]
     }
   })]
-  depends_on = [module.eks]
+  depends_on = [module.eks.eks_managed_node_groups]
 }

@@ -49,11 +49,12 @@ resource "aws_secretsmanager_secret_version" "cicd" {
   }
 }
 resource "helm_release" "external_secrets" {
-  name       = "external-secrets"
+  name = "external-secrets"
+
   repository = "https://charts.external-secrets.io"
   chart      = "external-secrets"
   # - 성능 최적화 및 AWS Secrets Manager 연동 속도 개선
-  version          = "0.12.0"
+  version          = "0.12.1"
   namespace        = "external-secrets"
   create_namespace = true
 
@@ -64,7 +65,7 @@ resource "helm_release" "external_secrets" {
       name   = "external-secrets"
     }
   })]
-  depends_on = [module.eks]
+  depends_on = [module.eks.eks_managed_node_groups, module.external_secrets_irsa]
 }
 
 module "external_secrets_irsa" {

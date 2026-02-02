@@ -74,3 +74,4 @@ output "app_domain" {
   description = "Application Domain"
   value       = var.environment == "prod" ? var.domain_name : "${var.environment}.${var.domain_name}"
 }
+

@@ -14,10 +14,11 @@ permissions:
   contents: read
   packages: write
 
+# 환경 변수를 변수(vars)와 시크릿(secrets)에서 가져옵니다.
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: k8s-ci-cd-app
-  EKS_CLUSTER_NAME: k8s-ci-cd-prod
+  AWS_REGION: ${{ vars.AWS_REGION }} # 변수 처리
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }} # 변수 처리
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }} # 변수 처리
   ENVIRONMENT: prod
 
 jobs:
