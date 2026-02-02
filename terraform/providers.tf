@@ -31,7 +31,7 @@ provider "aws" {
       Project     = "k8s-ci-cd"
       Environment = var.environment
       ManagedBy   = "terraform"
-      Repository  = "play-builder/k8s_ci_cd"
+      Repository  = "nomad-free/k8s_ci_cd"
     }
   }
 }
