@@ -2,12 +2,32 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: app-ingress
-  annotations:
-    # 운영 환경 요청 제한 (DDoS 방지 기초)
-    nginx.ingress.kubernetes.io/limit-rps: "100"
 spec:
   rules:
+    # 1. 메인 도메인
     - host: playdevops.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-svc
+                port:
+                  number: 80
+    # 2. [추가] Custody 서브도메인
+    - host: custody.playdevops.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-svc
+                port:
+                  number: 80
+    # 3. [추가] Datalab 서브도메인
+    - host: datalab.playdevops.xyz
       http:
         paths:
           - path: /
