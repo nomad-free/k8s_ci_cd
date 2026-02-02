@@ -1,5 +1,10 @@
+// [중요] 앱을 불러오기 전에 환경변수부터 설정해야 Config가 이걸 먹습니다.
+process.env.API_KEY = "test-api-key";
+process.env.JWT_SECRET = "test-jwt-secret";
+process.env.ENCRYPTION_KEY = "x".repeat(32); // 32글자
+
 const request = require("supertest");
-const app = require("../src/app");
+const app = require("../src/app"); // 이제 여기서 설정된 환경변수를 로드함
 const jwt = require("jsonwebtoken");
 
 // Mocking Repositories
@@ -9,11 +14,6 @@ jest.mock("../src/repositories/settlementRepository", () => ({
   ping: jest.fn(),
 }));
 const settlementRepo = require("../src/repositories/settlementRepository");
-
-// Test Env Config
-process.env.API_KEY = "test-api-key";
-process.env.JWT_SECRET = "test-jwt-secret";
-process.env.ENCRYPTION_KEY = "x".repeat(32);
 
 describe("Exchange Settlement Security Tests", () => {
   beforeEach(() => {

@@ -3,7 +3,8 @@ const jwt = require("jsonwebtoken");
 
 // 1. API Key 인증 (서버 간 통신용)
 exports.verifyApiKey = (req, res, next) => {
-  if (config.env === "test") return next();
+  // [삭제] 테스트 환경 스킵 로직 제거 (테스트에서도 인증을 검증해야 함)
+  // if (config.env === 'test') return next();  <-- 이 줄 삭제!
 
   const clientKey = req.headers["x-api-key"];
   if (!clientKey || clientKey !== config.security.apiKey) {
@@ -14,6 +15,7 @@ exports.verifyApiKey = (req, res, next) => {
   next();
 };
 
+// ... (verifyJwt 등 나머지는 그대로 유지)
 // 2. JWT 인증 (관리자/유저용)
 exports.verifyJwt = (req, res, next) => {
   const authHeader = req.headers["authorization"];
