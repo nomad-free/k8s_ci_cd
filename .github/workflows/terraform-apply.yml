@@ -39,16 +39,17 @@ jobs:
         run: |
           if [ "${{ github.ref_name }}" == "main" ]; then
             echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "cluster_name=k8s-ci-cd-prod" >> $GITHUB_OUTPUT
           else
             echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "cluster_name=k8s-ci-cd-dev" >> $GITHUB_OUTPUT
           fi
 
       - name: 🔐 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: terraform-apply-${{ steps.env.outputs.environment }}-${{ github.run_id }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: us-east-1
 
       - name: 🔧 Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -57,37 +58,26 @@ jobs:
 
       - name: 📦 Terraform Init
         working-directory: terraform
-        run: terraform init -backend-config=backends/${{ steps.env.outputs.environment }}.hcl
-
-      - name: ✅ Terraform Validate
-        working-directory: terraform
-        run: terraform validate
+        run: |
+          terraform init -backend-config=backends/${{ steps.env.outputs.environment }}.hcl
 
       - name: 📋 Terraform Plan
         working-directory: terraform
-        run: terraform plan -var-file=${{ steps.env.outputs.environment }}.tfvars -out=tfplan
+        run: |
+          terraform plan \
+            -var-file=${{ steps.env.outputs.environment }}.tfvars \
+            -out=tfplan
 
       - name: 🚀 Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
-      - name: 📤 Record Outputs
-        if: success()
+      - name: 📤 Show Outputs
         working-directory: terraform
         run: |
-          echo "### ✅ Terraform Apply Successful" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Environment** | \`${{ steps.env.outputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Actor** | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Terraform Apply - ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Cluster: ${{ steps.env.outputs.cluster_name }}" >> $GITHUB_STEP_SUMMARY
           terraform output -no-color >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       # Slack 알림 - 성공
       - name: 📢 Notify Slack - Success

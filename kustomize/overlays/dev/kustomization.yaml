@@ -5,6 +5,7 @@ metadata:
 namespace: app-dev
 resources:
   - ../../base
+  - hpa.yaml # HPA 추가
 commonLabels:
   environment: dev
 patches:

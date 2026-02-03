@@ -25,7 +25,7 @@ jobs:
   build-and-deploy:
     name: 🏗️ Build & Deploy (Dev)
     runs-on: ubuntu-latest
-    # [중요] CI가 '성공'했을 때만 실행
+    environment: dev # Environment 추가! (Secret 접근용)
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
@@ -73,7 +73,7 @@ jobs:
 
       - name: 🏥 Run health check
         run: |
-          kubectl port-forward svc/app-service 8080:80 -n app-dev &
+          kubectl port-forward svc/app-svc 8080:80 -n app-dev &
           PF_PID=$!
           sleep 10
           # [수정됨] 정확한 Health Check 경로 (/api/v1/health)

@@ -4,8 +4,8 @@ metadata:
   name: app-ingress
 spec:
   rules:
-    # 1. 메인 도메인
-    - host: playdevops.xyz
+    # Dev 환경은 dev. 서브도메인 사용
+    - host: dev.playdevops.xyz
       http:
         paths:
           - path: /
@@ -15,8 +15,7 @@ spec:
                 name: app-svc
                 port:
                   number: 80
-    # 2. [추가] Custody 서브도메인
-    - host: custody.playdevops.xyz
+    - host: custody-dev.playdevops.xyz
       http:
         paths:
           - path: /
@@ -26,8 +25,7 @@ spec:
                 name: app-svc
                 port:
                   number: 80
-    # 3. [추가] Datalab 서브도메인
-    - host: datalab.playdevops.xyz
+    - host: datalab-dev.playdevops.xyz
       http:
         paths:
           - path: /

@@ -11,7 +11,7 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
     # [권장] 헬스체크 경로 명시
-    nginx.ingress.kubernetes.io/health-check-path: "/health"
+    nginx.ingress.kubernetes.io/health-check-path: "/api/v1/health"
 spec:
   ingressClassName: nginx # IngressClass 명시 필수
 
