@@ -90,8 +90,10 @@ jobs:
           provenance: true
           sbom: true
 
-      - name: 📤 Output URI
-        run: echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
+      - name: 📤 Set Job Output
+        id: set-output
+        run: |
+          echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
 
   # 3. 쿠버네티스 배포 및 자동 롤백
   deploy:
@@ -123,6 +125,24 @@ jobs:
           cd kustomize/overlays/prod
           kustomize edit set image app=${{ needs.build.outputs.image_uri }}
 
+      - name: Get IRSA Role ARN from Terraform
+        id: irsa
+        working-directory: terraform
+        run: |
+          terraform init -backend-config=backends/prod.hcl
+          ROLE_ARN=$(terraform output -raw app_irsa_role_arn)
+          echo "role_arn=$ROLE_ARN" >> $GITHUB_OUTPUT
+
+      # [수정 2] 가져온 ARN을 Kustomize 파일(ServiceAccount Patch)에 주입하는 단계 추가
+      - name: 💉 Inject IRSA ARN into Manifest
+        run: |
+          # ServiceAccount 패치 파일의 플레이스홀더를 실제 ARN으로 교체
+          # 주의: patches/serviceaccount.yaml 파일에 'IRSA_ROLE_ARN_PLACEHOLDER'라는 문구가 있어야 함
+          sed -i "s|IRSA_ROLE_ARN_PLACEHOLDER|${{ steps.irsa.outputs.role_arn }}|g" kustomize/overlays/prod/patches/serviceaccount.yaml
+          
+          # 확인용 (보안상 ARN 전체 출력보다는 앞부분만 확인하거나 생략 가능)
+          echo "Injection complete."
+
       - name: 🚀 Deploy
         id: deploy
         run: kubectl apply -k kustomize/overlays/prod/
@@ -152,10 +172,10 @@ jobs:
 
       # Slack 알림
       - name: 📢 Notify Slack
-        if: always()
         uses: slackapi/slack-github-action@v2.0.0
         with:
-          webhook-type: webhook-trigger
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
             {
               "text": "Deployment Status: ${{ job.status }}",
