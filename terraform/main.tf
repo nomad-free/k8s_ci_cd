@@ -49,6 +49,17 @@ module "eks" {
   # 이 설정이 없으면 helm_release 등 K8s 리소스 생성 시 인증 에러 발생
   enable_cluster_creator_admin_permissions = true
 
+  kms_key_administrators = [
+    # 1. 현재 이 Terraform을 실행하는 사람 (Bootstrap하는 개발자)
+    data.aws_caller_identity.current.arn,
+
+    # 2. 미래에 실행될 GitHub Actions Role (Prod) - 미리 문 열어두기
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-${local.project_name}-prod",
+
+    # 3. 미래에 실행될 GitHub Actions Role (Dev) - 미리 문 열어두기
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-${local.project_name}-dev"
+  ]
+
   cluster_addons = {
     coredns = {
       most_recent = true

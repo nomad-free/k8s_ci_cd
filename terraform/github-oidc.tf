@@ -297,9 +297,9 @@ resource "aws_iam_role_policy" "terraform_access" {
         Resource = "*"
       },
       {
-        Sid    = "ECRFullAccess"
-        Effect = "Allow"
-        Action = ["ecr:*"]
+        Sid      = "ECRFullAccess"
+        Effect   = "Allow"
+        Action   = ["ecr:*"]
         Resource = "*"
       },
     ]
