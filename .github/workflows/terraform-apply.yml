@@ -1,12 +1,6 @@
 # =============================================================================
-# Terraform Apply - Merge 후 자동 실행
+# Terraform Apply - Merge 후 자동 실행 (Final Fixed Version)
 # =============================================================================
-# 트리거: develop 또는 main 브랜치에 terraform/ 폴더 변경사항 push 시
-# 동작:
-#   - develop 브랜치 → dev 환경에 Apply
-#   - main 브랜치 → prod 환경에 Apply (GitHub Environment 승인 필요)
-# =============================================================================
-
 name: Terraform Apply
 
 on:
@@ -33,7 +27,7 @@ jobs:
   apply:
     name: 🚀 Terraform Apply
     runs-on: ubuntu-latest
-    # GitHub Environments 사용 (prod는 승인 필요하도록 설정 권장)
+    # GitHub Environments 사용 (환경별 Secret 분리 적용)
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
 
     steps:
@@ -100,7 +94,8 @@ jobs:
         if: success()
         uses: slackapi/slack-github-action@v2.0.0
         with:
-          webhook-type: webhook-trigger
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
             {
               "text": "✅ Terraform Apply Success",
@@ -134,15 +129,14 @@ jobs:
                 }
               ]
             }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
       # Slack 알림 - 실패
       - name: 📢 Notify Slack - Failure
         if: failure()
         uses: slackapi/slack-github-action@v2.0.0
         with:
-          webhook-type: webhook-trigger
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
             {
               "text": "❌ Terraform Apply Failed",
@@ -182,5 +176,3 @@ jobs:
                 }
               ]
             }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
