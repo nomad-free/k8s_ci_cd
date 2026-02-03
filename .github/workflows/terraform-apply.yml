@@ -1,3 +1,12 @@
+# =============================================================================
+# Terraform Apply - Merge 후 자동 실행
+# =============================================================================
+# 트리거: develop 또는 main 브랜치에 terraform/ 폴더 변경사항 push 시
+# 동작:
+#   - develop 브랜치 → dev 환경에 Apply
+#   - main 브랜치 → prod 환경에 Apply (GitHub Environment 승인 필요)
+# =============================================================================
+
 name: Terraform Apply
 
 on:
@@ -7,6 +16,10 @@ on:
       - main
     paths:
       - "terraform/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   id-token: write
@@ -20,12 +33,14 @@ jobs:
   apply:
     name: 🚀 Terraform Apply
     runs-on: ubuntu-latest
+    # GitHub Environments 사용 (prod는 승인 필요하도록 설정 권장)
     environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
 
-      - name: Set Environment
+      - name: 🎯 Set Environment
         id: env
         run: |
           if [ "${{ github.ref_name }}" == "main" ]; then
@@ -34,40 +49,136 @@ jobs:
             echo "environment=dev" >> $GITHUB_OUTPUT
           fi
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: terraform-apply-${{ steps.env.outputs.environment }}-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Terraform Init
+      - name: 📦 Terraform Init
+        working-directory: terraform
+        run: terraform init -backend-config=backends/${{ steps.env.outputs.environment }}.hcl
+
+      - name: ✅ Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: 📋 Terraform Plan
+        working-directory: terraform
+        run: terraform plan -var-file=${{ steps.env.outputs.environment }}.tfvars -out=tfplan
+
+      - name: 🚀 Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: 📤 Record Outputs
+        if: success()
         working-directory: terraform
         run: |
-          terraform init -backend-config=backends/${{ steps.env.outputs.environment }}.hcl
+          echo "### ✅ Terraform Apply Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | \`${{ steps.env.outputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Actor** | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          terraform output -no-color >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-      - name: Terraform Apply
-        working-directory: terraform
-        run: |
-          terraform apply -var-file=${{ steps.env.outputs.environment }}.tfvars -auto-approve
-
-      - name: Notify Slack
-        if: always()
+      # Slack 알림 - 성공
+      - name: 📢 Notify Slack - Success
+        if: success()
         uses: slackapi/slack-github-action@v2.0.0
         with:
           webhook-type: webhook-trigger
           payload: |
             {
-              "text": "Terraform Apply: ${{ job.status }}",
+              "text": "✅ Terraform Apply Success",
               "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "✅ Terraform Apply Successful",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Environment:*\n`${{ steps.env.outputs.environment }}`" },
+                    { "type": "mrkdwn", "text": "*Branch:*\n`${{ github.ref_name }}`" },
+                    { "type": "mrkdwn", "text": "*Actor:*\n`${{ github.actor }}`" },
+                    { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Workflow" },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      # Slack 알림 - 실패
+      - name: 📢 Notify Slack - Failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook-type: webhook-trigger
+          payload: |
+            {
+              "text": "❌ Terraform Apply Failed",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "❌ Terraform Apply Failed",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Environment:*\n`${{ steps.env.outputs.environment }}`" },
+                    { "type": "mrkdwn", "text": "*Branch:*\n`${{ github.ref_name }}`" }
+                  ]
+                },
                 {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Terraform Apply* :${{ job.status == 'success' && 'white_check_mark' || 'x' }}:\nEnvironment: `${{ steps.env.outputs.environment }}`\nBranch: `${{ github.ref_name }}`"
+                    "text": "⚠️ *Immediate attention required!*"
                   }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "🔍 View Logs" },
+                      "style": "danger",
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
                 }
               ]
             }

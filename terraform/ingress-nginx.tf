@@ -17,7 +17,7 @@ resource "helm_release" "ingress_nginx" {
         type = "LoadBalancer"
         annotations = {
           # [2025 Best Practice] AWS Load Balancer Controller v3.x 호환 설정
-          "service.beta.kubernetes.io/aws-load-balancer-type"   = "external"
+          "service.beta.kubernetes.io/aws-load-balancer-type"   = "nlb"
           "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
           # 3. 타겟 유형 (성능 핵심)
           # "ip": NLB가 트래픽을 노드(EC2)를 거치지 않고 "파드(Pod)의 IP"로 직접 꽂아줍니다.
@@ -61,5 +61,6 @@ resource "helm_release" "ingress_nginx" {
       ]
     }
   })]
-  depends_on = [module.eks.eks_managed_node_groups]
+  depends_on = [time_sleep.wait_for_eks,
+  module.eks.eks_managed_node_groups]
 }

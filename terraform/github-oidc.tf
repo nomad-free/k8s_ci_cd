@@ -158,7 +158,12 @@ resource "aws_eks_access_policy_association" "github_actions" {
 }
 
 
-# 추가: Terraform 실행을 위한 IAM 정책
+# [GitOps] Terraform 실행을 위한 IAM 정책 (전체 권한)
+# =============================================================================
+# GitHub Actions에서 terraform apply를 실행하려면 광범위한 AWS 권한이 필요합니다.
+# 최소 권한 원칙을 따르되, Terraform이 관리하는 모든 리소스에 대한 권한을 포함합니다.
+# =============================================================================
+
 resource "aws_iam_role_policy" "terraform_access" {
   name = "terraform-access"
   role = aws_iam_role.github_actions.id
@@ -167,27 +172,128 @@ resource "aws_iam_role_policy" "terraform_access" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "VPCFullAccess"
+        Effect   = "Allow"
+        Action   = ["ec2:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "EKSFullAccess"
+        Effect   = "Allow"
+        Action   = ["eks:*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "IAMForTerraform"
         Effect = "Allow"
         Action = [
-          # VPC 관련
-          "ec2:*",
-          # EKS 관련
-          "eks:*",
-          # IAM 관련 (IRSA용)
-          "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy",
-          "iam:DetachRolePolicy", "iam:PutRolePolicy", "iam:GetRole",
-          "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
-          "iam:CreateOpenIDConnectProvider", "iam:DeleteOpenIDConnectProvider",
-          "iam:TagRole", "iam:PassRole",
-          # Secrets Manager
-          "secretsmanager:*",
-          # S3 (State 저장용)
-          "s3:*",
-          # CloudWatch Logs
-          "logs:*",
-          # KMS (암호화)
-          "kms:*"
+          # Role 관리
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:GetRole",
+          "iam:UpdateRole",
+          "iam:TagRole",
+          "iam:UntagRole",
+          "iam:ListRoleTags",
+          "iam:PassRole",
+          # Role Policy 관리
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:PutRolePolicy",
+          "iam:GetRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListInstanceProfilesForRole",
+          # OIDC Provider 관리
+          "iam:CreateOpenIDConnectProvider",
+          "iam:DeleteOpenIDConnectProvider",
+          "iam:GetOpenIDConnectProvider",
+          "iam:TagOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviders",
+          # Policy 관리
+          "iam:CreatePolicy",
+          "iam:DeletePolicy",
+          "iam:GetPolicy",
+          "iam:GetPolicyVersion",
+          "iam:ListPolicyVersions",
+          # Service Linked Role
+          "iam:CreateServiceLinkedRole"
         ]
+        Resource = "*"
+      },
+      {
+        Sid      = "SecretsManagerFullAccess"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3ForTerraformState"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "s3:GetBucketVersioning",
+          "s3:GetBucketLocation"
+        ]
+        Resource = [
+          "arn:aws:s3:::plydevops-infra-tf-*",
+          "arn:aws:s3:::plydevops-infra-tf-*/*"
+        ]
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:DeleteLogGroup",
+          "logs:DescribeLogGroups",
+          "logs:PutRetentionPolicy",
+          "logs:TagLogGroup",
+          "logs:UntagLogGroup",
+          "logs:ListTagsLogGroup",
+          "logs:TagResource",
+          "logs:UntagResource",
+          "logs:ListTagsForResource"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "KMSForEncryption"
+        Effect = "Allow"
+        Action = [
+          "kms:CreateKey",
+          "kms:DescribeKey",
+          "kms:GetKeyPolicy",
+          "kms:GetKeyRotationStatus",
+          "kms:ListResourceTags",
+          "kms:ScheduleKeyDeletion",
+          "kms:TagResource",
+          "kms:CreateAlias",
+          "kms:DeleteAlias",
+          "kms:ListAliases"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "AutoScalingFullAccess"
+        Effect   = "Allow"
+        Action   = ["autoscaling:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "ElasticLoadBalancingFullAccess"
+        Effect   = "Allow"
+        Action   = ["elasticloadbalancing:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "STSGetCallerIdentity"
+        Effect   = "Allow"
+        Action   = ["sts:GetCallerIdentity"]
         Resource = "*"
       }
     ]

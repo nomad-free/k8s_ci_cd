@@ -45,6 +45,10 @@ module "eks" {
   cluster_endpoint_public_access  = true
   cluster_endpoint_private_access = true
 
+  # [핵심] Terraform 실행 주체(IAM User/Role)에게 클러스터 관리자 권한 부여
+  # 이 설정이 없으면 helm_release 등 K8s 리소스 생성 시 인증 에러 발생
+  enable_cluster_creator_admin_permissions = true
+
   cluster_addons = {
     coredns = {
       most_recent = true
@@ -150,7 +154,8 @@ resource "aws_ecr_lifecycle_policy" "app" {
 # EKS 클러스터가 완전히 준비될 때까지 대기
 # Helm 리소스들이 이 리소스에 depends_on으로 연결됩니다
 resource "time_sleep" "wait_for_eks" {
-  depends_on = [module.eks]
+  depends_on = [module.eks, aws_eks_access_entry.github_actions,
+  aws_eks_access_policy_association.github_actions]
 
-  create_duration = "30s"
+  create_duration = "60s"
 }
