@@ -19,14 +19,22 @@ terraform {
       version = "~> 0.12"
     }
   }
-  backend "s3" {
-
-  }
+  backend "s3" {}
 }
 
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
 data "aws_caller_identity" "current" {}
+
+# [핵심 수정 1] 클러스터 정보를 AWS에서 직접 조회 (Data Source)
+# depends_on을 제거하여 Plan 단계에서 즉시 정보를 읽어오게 수정 (invalid configuration 해결)
+data "aws_eks_cluster" "cluster" {
+  name = module.eks.cluster_name
+}
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = module.eks.cluster_name
+}
 
 provider "aws" {
   region = var.aws_region
@@ -41,10 +49,10 @@ provider "aws" {
   }
 }
 
-
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  # [핵심 수정 2] module 출력값 대신 data 소스 사용 (실제 AWS 상태 기반)
+  host                   = data.aws_eks_cluster.cluster.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
 
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
@@ -60,8 +68,9 @@ provider "kubernetes" {
 
 provider "helm" {
   kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    # [핵심 수정 3] module 출력값 대신 data 소스 사용
+    host                   = data.aws_eks_cluster.cluster.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
 
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
@@ -73,6 +82,5 @@ provider "helm" {
         "--region", var.aws_region
       ]
     }
-
   }
 }
