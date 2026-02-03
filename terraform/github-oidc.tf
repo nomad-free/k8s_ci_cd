@@ -295,7 +295,13 @@ resource "aws_iam_role_policy" "terraform_access" {
         Effect   = "Allow"
         Action   = ["sts:GetCallerIdentity"]
         Resource = "*"
-      }
+      },
+      {
+        Sid    = "ECRFullAccess"
+        Effect = "Allow"
+        Action = ["ecr:*"]
+        Resource = "*"
+      },
     ]
   })
 }
