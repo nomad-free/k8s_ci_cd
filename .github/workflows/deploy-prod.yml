@@ -207,7 +207,7 @@ jobs:
       - name: 🏥 Health Check via Proxy
         run: |
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
-          kubectl port-forward svc/app-service 8080:80 -n app-prod &
+          kubectl port-forward svc/app-svc 8080:80 -n app-prod &
           PF_PID=$!
           sleep 10
           # [수정됨] 정확한 Health Check 경로 (/api/v1/health)

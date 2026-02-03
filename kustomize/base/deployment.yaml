@@ -144,23 +144,21 @@ spec:
           # Startup Probe (앱 초기화 시간 확보)
           startupProbe:
             httpGet:
-              path: /health
+              path: /api/v1/health
               port: http
             failureThreshold: 30
             periodSeconds: 10
 
-          # Liveness Probe (앱이 살아있는지)
           livenessProbe:
             httpGet:
-              path: /health
+              path: /api/v1/health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
 
-          # Readiness Probe (트래픽 받을 준비 됐는지)
           readinessProbe:
             httpGet:
-              path: /health
+              path: /api/v1/health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5

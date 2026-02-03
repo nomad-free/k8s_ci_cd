@@ -61,7 +61,7 @@ jobs:
       - name: 🔍 Run Trivy vulnerability scanner
         # [2025.08 출시] trivy-action v0.28.0
         # - AI 기반 취약점 오탐(False Positive) 필터링 추가
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: "fs"
           scan-ref: "."
