@@ -16,7 +16,8 @@ resource "aws_secretsmanager_secret_version" "app" {
     DB_USER     = "REPLACE_ME"
     DB_PASSWORD = "REPLACE_ME"
 
-    API_KEY = "REPLACE_ME" # 서버 간 통신용 (M2M)
+    API_KEY    = "REPLACE_ME" # 서버 간 통신용 (M2M)
+    API_SECRET = "REPLACE_ME"
 
     JWT_SECRET     = "REPLACE_ME" # 관리자 로그인 토큰 발급용
     ENCRYPTION_KEY = "REPLACE_ME" # 민감 데이터 DB 저장 시 암호화용 (32byte)
@@ -75,7 +76,8 @@ module "external_secrets_irsa" {
   role_name                      = "${local.cluster_name}-external-secrets"
   attach_external_secrets_policy = true
   external_secrets_secrets_manager_arns = [
-    aws_secretsmanager_secret.app.arn
+    aws_secretsmanager_secret.app.arn,
+    aws_secretsmanager_secret.cicd.arn
   ]
   oidc_providers = {
     main = {
@@ -83,5 +85,29 @@ module "external_secrets_irsa" {
       namespace_service_accounts = ["external-secrets:external-secrets"]
     }
   }
+  tags = local.common_tags
+}
+
+module "app_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "5.50.0"
+
+  role_name = "${local.cluster_name}-secrets-manager"
+
+  attach_external_secrets_policy = true
+  external_secrets_secrets_manager_arns = [
+    aws_secretsmanager_secret.app.arn
+  ]
+
+  oidc_providers = {
+    main = {
+      provider_arn = module.eks.oidc_provider_arn
+      namespace_service_accounts = [
+        "app-dev:app-sa",
+        "app-prod:app-sa"
+      ]
+    }
+  }
+
   tags = local.common_tags
 }

@@ -75,3 +75,7 @@ output "app_domain" {
   value       = var.environment == "prod" ? var.domain_name : "${var.environment}.${var.domain_name}"
 }
 
+output "app_irsa_role_arn" {
+  description = "IAM Role ARN for App ServiceAccount"
+  value       = module.app_irsa.iam_role_arn
+}

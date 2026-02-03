@@ -63,6 +63,26 @@ jobs:
       - name: 🔗 Configure kubectl
         run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
+      # [수정 1] Terraform에서 Dev 환경의 Role ARN 가져오기
+      - name: 🔢 Get IRSA Role ARN from Terraform
+        id: irsa
+        working-directory: terraform
+        run: |
+          # ⚠️ 중요: Dev 배포이므로 backends/dev.hcl을 사용해야 합니다! (Prod 코드를 그대로 복붙하면 안 됨)
+          terraform init -reconfigure -backend-config=backends/dev.hcl
+
+          # Output 이름은 같지만, dev.hcl로 초기화했으므로 Dev용 Role ARN이 나옵니다.
+          ROLE_ARN=$(terraform output -raw app_irsa_role_arn)
+          echo "role_arn=$ROLE_ARN" >> $GITHUB_OUTPUT
+
+      # [수정 2] Dev 환경의 Kustomize 파일에 주입하기
+      - name: 💉 Inject IRSA ARN into Manifest
+        run: |
+          # ⚠️ 중요: 경로가 kustomize/overlays/dev/... 여야 합니다.
+          sed -i "s|IRSA_ROLE_ARN_PLACEHOLDER|${{ steps.irsa.outputs.role_arn }}|g" kustomize/overlays/dev/patches/serviceaccount.yaml
+
+          echo "Injection complete for Dev."
+
       # Dev 환경은 별도의 롤아웃 대기나 보안 스캔 없이 즉시 반영
       - name: 🚀 Deploy to Dev
         run: |
@@ -88,10 +108,10 @@ jobs:
 
       # Dev 알림은 간소하게
       - name: 📢 Notify Slack
-        if: always()
         uses: slackapi/slack-github-action@v2.0.0
         with:
-          webhook-type: webhook-trigger
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
             {
               "text": "Dev Deploy: ${{ job.status }}",
