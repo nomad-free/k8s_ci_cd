@@ -47,7 +47,35 @@ module "eks" {
 
   # [핵심] Terraform 실행 주체(IAM User/Role)에게 클러스터 관리자 권한 부여
   # 이 설정이 없으면 helm_release 등 K8s 리소스 생성 시 인증 에러 발생
-  enable_cluster_creator_admin_permissions = true
+  enable_cluster_creator_admin_permissions = false
+
+  access_entries = {
+    master_admin = {
+      # 2. 계정 ID 부분을 변수(${...})로 처리합니다.
+      principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/Master-Admin"
+
+      policy_associations = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  }
+
+
+  kms_key_administrators = [
+    # 1. 현재 이 Terraform을 실행하는 사람 (Bootstrap하는 개발자)
+    data.aws_caller_identity.current.arn,
+
+    # 2. 미래에 실행될 GitHub Actions Role (Prod) - 미리 문 열어두기
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-${local.project_name}-prod",
+
+    # 3. 미래에 실행될 GitHub Actions Role (Dev) - 미리 문 열어두기
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-${local.project_name}-dev"
+  ]
 
   cluster_addons = {
     coredns = {

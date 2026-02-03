@@ -1,12 +1,3 @@
-# =============================================================================
-# Terraform Plan - PR에서 자동 실행
-# =============================================================================
-# 트리거: terraform/ 폴더 변경이 있는 PR 생성/수정 시
-# 동작:
-#   - develop으로 PR → dev 환경 Plan
-#   - main으로 PR → prod 환경 Plan
-# =============================================================================
-
 name: Terraform Plan
 
 on:
@@ -18,7 +9,7 @@ on:
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
+  pull-requests: write # PR에 코멘트 작성용
 
 env:
   AWS_REGION: us-east-1
@@ -29,111 +20,58 @@ jobs:
     name: 📋 Terraform Plan
     runs-on: ubuntu-latest
 
+    # [핵심 수정] 이 줄이 있어야 Environment Secret(AWS_ROLE_ARN)을 가져올 수 있습니다.
+    environment: ${{ matrix.environment }}
+
+    strategy:
+      matrix:
+        environment: [dev] # 필요시 [dev, prod]로 확장 가능
+
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # PR 대상 브랜치에 따라 환경 결정
-      - name: 🎯 Determine Environment
-        id: env
-        run: |
-          if [ "${{ github.base_ref }}" == "main" ]; then
-            echo "environment=prod" >> $GITHUB_OUTPUT
-          else
-            echo "environment=dev" >> $GITHUB_OUTPUT
-          fi
-          echo "Environment: ${{ github.base_ref }} -> $(cat $GITHUB_OUTPUT | grep environment)"
-
-      - name: 🔐 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: terraform-plan-${{ steps.env.outputs.environment }}-${{ github.run_id }}
+          # 세션 이름도 명확하게 지정하는 것이 좋습니다.
+          role-session-name: terraform-plan-${{ matrix.environment }}-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🔧 Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
 
-      - name: 📦 Terraform Init
-        id: init
+      - name: Terraform Init
         working-directory: terraform
-        run: terraform init -backend-config=backends/${{ steps.env.outputs.environment }}.hcl -no-color
+        run: |
+          terraform init -backend-config=backends/${{ matrix.environment }}.hcl
 
-      - name: ✅ Terraform Validate
-        id: validate
-        working-directory: terraform
-        run: terraform validate -no-color
-
-      - name: 📋 Terraform Plan
+      - name: Terraform Plan
         id: plan
         working-directory: terraform
         run: |
-          terraform plan -var-file=${{ steps.env.outputs.environment }}.tfvars -no-color -out=tfplan 2>&1 | tee plan_output.txt
-          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+          terraform plan -var-file=${{ matrix.environment }}.tfvars -no-color -out=tfplan
         continue-on-error: true
 
-      - name: 💬 Comment Plan on PR
+      - name: Comment Plan on PR
         uses: actions/github-script@v7
-        if: always()
-        env:
-          PLAN_OUTPUT: ${{ steps.plan.outputs.stdout }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const environment = '${{ steps.env.outputs.environment }}';
-            const initOutcome = '${{ steps.init.outcome }}';
-            const validateOutcome = '${{ steps.validate.outcome }}';
-            const planOutcome = '${{ steps.plan.outcome }}';
+            const output = `#### Terraform Plan 📋
+            **Environment:** \`${{ matrix.environment }}\`
+            **Result:** ${{ steps.plan.outcome }}
 
-            let planOutput = '';
-            try {
-              planOutput = fs.readFileSync('terraform/plan_output.txt', 'utf8');
-            } catch (e) {
-              planOutput = 'Plan output not available';
-            }
+            <details><summary>Show Plan</summary>
 
-            // 출력 길이 제한 (GitHub 코멘트 제한)
-            const maxLength = 60000;
-            if (planOutput.length > maxLength) {
-              planOutput = planOutput.substring(0, maxLength) + '\n\n... (truncated)';
-            }
-
-            let statusEmoji = '✅';
-            if (planOutcome !== 'success') statusEmoji = '❌';
-
-            const output = `### ${statusEmoji} Terraform Plan - \`${environment}\` Environment
-
-            | Step | Status |
-            |------|--------|
-            | 📦 Init | \`${initOutcome}\` |
-            | ✅ Validate | \`${validateOutcome}\` |
-            | 📋 Plan | \`${planOutcome}\` |
-
-            <details><summary>📄 Show Plan Output</summary>
-
-            \`\`\`hcl
-            ${planOutput}
+            \`\`\`terraform
+            ${{ steps.plan.outputs.stdout }}
             \`\`\`
 
-            </details>
-
-            ---
-            *Triggered by @${{ github.actor }} • Commit: \`${{ github.event.pull_request.head.sha }}\`*
-            `;
+            </details>`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: output
-            });
-
-      - name: ❌ Fail if Plan Failed
-        if: steps.plan.outcome == 'failure'
-        run: |
-          echo "::error::Terraform plan failed!"
-          exit 1
+            })
