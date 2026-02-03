@@ -302,6 +302,12 @@ resource "aws_iam_role_policy" "terraform_access" {
         Action   = ["ecr:*"]
         Resource = "*"
       },
+      {
+        Sid    = "KMSFullAccess"
+        Effect = "Allow"
+        Action = ["kms:*"]
+        Resource = "*"
+      }
     ]
   })
 }
